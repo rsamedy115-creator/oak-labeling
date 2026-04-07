@@ -1,0 +1,10 @@
+streamlit
+folium
+streamlit-folium
+pystac-client
+planetary-computer
+odc-stac
+matplotlib
+geopandas
+shapely
+xarray
