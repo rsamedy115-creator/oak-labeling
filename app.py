@@ -10,7 +10,7 @@ import json
 import plotly.express as px
 
 st.set_page_config(layout="wide", page_title="Разметка дубрав")
-st.title("🌳 Система разметки дубрав: Волго-Ахтубинская пойма")
+st.title("🌳 Система разметки дубрав 🦫 🦆")
 
 # Инициализация хранилищ
 if "labeled_data" not in st.session_state:
@@ -20,9 +20,9 @@ if "context_figs" not in st.session_state:
 
 st.info("""
 **Как работать:** 1. Нарисуйте большой прямоугольник, охватывающий нужный участок.
-2. Выберите год и нажмите «Загрузить 3 снимка».
-3. Рассмотрите снимки (их можно приближать и двигать мышкой!).
-4. Нарисуйте точные контуры поверх деревьев на карте и сохраните их кнопками.
+2. Выберите год и нажмите «Загрузить 3 снимка» для контекста.
+3. Удалите старый прямоугольник.
+4. Нарисуйте точные контуры поверх деревьев на карте и сохраните их кнопками на верхней панели.
 """)
 
 col1, col2 = st.columns([2, 1])
@@ -58,12 +58,33 @@ with col2:
     if st_map["last_active_drawing"]:
         geom = st_map["last_active_drawing"]["geometry"]
         
-        st.subheader("Шаг 1: Контекст")
+        # --- БЛОК 1: КНОПКИ РАЗМЕТКИ  ---
+        st.subheader("🎯 Панель разметки")
+        st.write("Нарисуйте точный контур на карте и нажмите:")
         
-        # Выбор года
-        selected_year = st.selectbox("📅 Выберите год снимков:", [2023, 2024, 2025, 2026], index=2)
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            if st.button("🌳 Это ДУБ", use_container_width=True):
+                st.session_state.labeled_data.append({
+                    "type": "Feature", "properties": {"label": "Oak"}, "geometry": geom
+                })
+                st.success("Сохранено!")
+        with btn_col2:
+            if st.button("❌ Это НЕ дуб", use_container_width=True):
+                st.session_state.labeled_data.append({
+                    "type": "Feature", "properties": {"label": "Not_Oak"}, "geometry": geom
+                })
+                st.success("Сохранено!")
+                
+        st.markdown("---")
         
-        if st.button("🗺️ Загрузить 3 снимка для этой зоны", use_container_width=True):
+        # --- БЛОК 2: ЗАГРУЗКА И ОТОБРАЖЕНИЕ СНИМКОВ (ВНИЗУ) ---
+        st.subheader("🗺️ Вспомогательные снимки")
+        
+        # По умолчанию индекс 2 (это 2025 год). 2026 год пока рано искать для июля.
+        selected_year = st.selectbox("📅 Выберите год:", [2023, 2024, 2025, 2026], index=2)
+        
+        if st.button("Загрузить 3 снимка для этой зоны", use_container_width=True):
             coords = geom["coordinates"][0]
             lons = [p[0] for p in coords]
             lats = [p[1] for p in coords]
@@ -76,11 +97,10 @@ with col2:
                         modifier=planetary_computer.sign_inplace,
                     )
                     
-                    # Ищем самые безоблачные снимки по месяцам динамически!
                     months_search = [
-                        ("Апрель (фон)", f"{selected_year}-04-01/{selected_year}-04-30"),
-                        ("Май (распускание)", f"{selected_year}-05-01/{selected_year}-05-31"),
-                        ("Июль (пик вегетации)", f"{selected_year}-07-01/{selected_year}-07-31")
+                        ("Апрель", f"{selected_year}-04-01/{selected_year}-04-30"),
+                        ("Май", f"{selected_year}-05-01/{selected_year}-05-31"),
+                        ("Июль", f"{selected_year}-07-01/{selected_year}-07-31")
                     ]
                     
                     selected_items = []
@@ -89,17 +109,16 @@ with col2:
                     for name, d_range in months_search:
                         search = catalog.search(
                             collections=["sentinel-2-l2a"], bbox=bounds, datetime=d_range,
-                            query={"eo:cloud_cover": {"lt": 30}} # Допускаем до 30% облаков в целом кадре
+                            query={"eo:cloud_cover": {"lt": 30}}
                         )
                         items = list(search.items())
                         if items:
-                            # Берем снимок с минимальной облачностью за этот месяц
                             items.sort(key=lambda x: x.properties["eo:cloud_cover"])
                             selected_items.append(items[0])
                             plot_titles.append(f"{name}: {items[0].datetime.strftime('%Y-%m-%d')}")
                     
                     if not selected_items:
-                        st.error("Увы, безоблачных снимков за этот год не найдено. Попробуйте другой год.")
+                        st.error(f"Я не знаю как такое может быть, но безоблачных снимков за {selected_year} год не найдено!!!")
                     else:
                         dataset = odc.stac.load(
                             selected_items, bands=["B04", "B03", "B02"],
@@ -110,11 +129,9 @@ with col2:
                         data_np = np.transpose(data_np, (1, 0, 2, 3))
                         data_tensor = np.clip((data_np.astype(np.float32) / 10000.0) * 2.5, 0, 1)
 
-                        # Создаем интерактивные графики Plotly
                         figs = []
                         for i in range(len(selected_items)):
                             rgb_img = np.transpose(data_tensor[i], (1, 2, 0))
-                            # Конвертируем значения в 0-255 для Plotly
                             rgb_img_uint8 = (rgb_img * 255).astype(np.uint8)
                             fig = px.imshow(rgb_img_uint8, title=plot_titles[i])
                             fig.update_xaxes(visible=False)
@@ -127,43 +144,25 @@ with col2:
             except Exception as e:
                 st.error(f"Ошибка загрузки (возможно, слишком большая область). Детали: {e}")
 
-        # Показываем сохраненные интерактивные снимки
+        # Отрисовка картинок под кнопкой загрузки
         if st.session_state.context_figs is not None:
             for fig in st.session_state.context_figs:
-                # Интерактивный график: можно зумить и таскать
                 st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
-            
-            st.markdown("---")
-            st.subheader("Шаг 2: Разметка")
-            st.write("Нарисуйте точный контур на карте и нажмите нужную кнопку:")
-            
-            btn_col1, btn_col2 = st.columns(2)
-            with btn_col1:
-                if st.button("🌳 Это ДУБ", use_container_width=True):
-                    st.session_state.labeled_data.append({
-                        "type": "Feature", "properties": {"label": "Oak"}, "geometry": geom
-                    })
-                    st.success("Сохранено!")
-            with btn_col2:
-                if st.button("❌ Это НЕ дуб", use_container_width=True):
-                    st.session_state.labeled_data.append({
-                        "type": "Feature", "properties": {"label": "Not_Oak"}, "geometry": geom
-                    })
-                    st.success("Сохранено!")
+
     else:
         st.write("Начните с выделения области на карте слева.")
 
 st.markdown("---")
 st.subheader(f"Размечено точных участков: {len(st.session_state.labeled_data)}")
 
-# Панель управления сохраненными данными
+# Панель управления сохраненными данными (В самом низу экрана)
 if len(st.session_state.labeled_data) > 0:
     ctrl_col1, ctrl_col2 = st.columns([1, 3])
     
     with ctrl_col1:
         if st.button("⏪ Отменить последнее", help="Удалить последний добавленный полигон"):
             st.session_state.labeled_data.pop()
-            st.rerun() # Мгновенно обновляем интерфейс
+            st.rerun()
             
     with ctrl_col2:
         geojson_dict = {"type": "FeatureCollection", "features": st.session_state.labeled_data}
