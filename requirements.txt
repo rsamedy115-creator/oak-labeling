@@ -4,5 +4,5 @@ streamlit-folium
 pystac-client
 planetary-computer
 odc-stac
-matplotlib
+plotly
 xarray
